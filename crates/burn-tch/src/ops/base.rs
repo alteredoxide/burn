@@ -543,3 +543,38 @@ impl<E: tch::kind::Element + Copy + Default> TchOps<E> {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gather() {
+        let arr: Vec<u8> = (1..13).collect();
+        let tch_tensor = tch::Tensor::from_slice(&arr).reshape(&[4, 3]);
+        let tensor = TchTensor::<u8, 2>::new(tch_tensor);
+        let test_cases = vec![
+            (
+                0,
+                tch::Tensor::from_slice2(&[ [0i64, 1, 3], [3, 1, 2] ]),
+                tch::Tensor::from_slice2(&[ [1u8, 5, 12], [10, 5, 9] ])
+            ),
+            (
+                1,
+                tch::Tensor::from_slice2(&[ [0i64, 2], [1, 1], [2, 1] ]),
+                tch::Tensor::from_slice2(&[ [1u8, 3], [5, 5], [9, 8] ])
+            )
+        ];
+        let mut i = 0;
+        for (axis, index, expected) in test_cases {
+            let index = TchTensor::<i64, 2>::new(index);
+            let expected = TchTensor::<u8, 2>::new(expected);
+            let out = TchOps::gather(axis, tensor.clone(), index);
+            assert_eq!(out.tensor, expected.tensor);
+            i += 1;
+        }
+        assert_eq!(i, 2);
+    }
+
+}

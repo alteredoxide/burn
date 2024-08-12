@@ -1,6 +1,12 @@
 use alloc::vec::Vec;
 use burn_tensor::ElementConversion;
 use burn_tensor::TensorData;
+use ndarray::Array;
+use ndarray::ArrayBase;
+use ndarray::ArrayView1;
+use ndarray::Dimension;
+use ndarray::Ix;
+use ndarray::ViewRepr;
 use core::fmt::Debug;
 use core::{marker::PhantomData, ops::Range};
 use ndarray::s;
@@ -306,7 +312,53 @@ where
         }
     }
 
+    fn validate_shapes<D: Dimension>(
+        axis: usize,
+        input: &ArrayBase<ViewRepr<&E>, D>,
+        index: &ArrayBase<ViewRepr<&i64>, D>
+    ) {
+        // Enforce data and index having same number of dimensions
+        assert_eq!(
+            input.ndim(), index.ndim(),
+            "input and index must have the same number of dimensions."
+        );
+        // Enforce all axes of index except the specified axis have the same length as the
+        // corresponding axis in data.
+        let mut i: usize = 0;
+        for dim in input.shape() {
+            if i == axis { continue };
+            assert!(
+                &index.shape()[i] <= dim,
+                "index.size(d) <= input.size(d) for all dimensions d != axis"
+            );
+            i += 1;
+        }
+    }
+
     pub fn gather<const D: usize>(
+        axis: usize,
+        tensor: NdArrayTensor<E, D>,
+        index: NdArrayTensor<i64, D>,
+    ) -> NdArrayTensor<E, D> {
+        assert!(axis < tensor.array.ndim(), "axis must be in range [0, input.ndim()-1]");
+        Self::validate_shapes(axis, &tensor.array.view(), &index.array.view());
+
+        let input_d = tensor.array.into_dyn();
+        let raw_dim = index.array.raw_dim();
+        let mut out = Array::zeros(raw_dim);
+
+        for (coord, idx) in index.array.indexed_iter() {
+            let dim = coord.into_dimension();
+            let arr_view: ArrayView1<'_, Ix> = dim.as_array_view();
+            let mut indices: Vec<usize> = arr_view.iter().copied().collect();
+            indices[axis] = *idx as usize;
+            let coords = IxDyn(&indices);
+            out[dim] = input_d[coords];
+        }
+        NdArrayTensor::new(out.into())
+    }
+
+    pub fn gather_old<const D: usize>(
         dim: usize,
         mut tensor: NdArrayTensor<E, D>,
         mut indices: NdArrayTensor<i64, D>,
@@ -621,6 +673,8 @@ fn arg<E: NdArrayElement, const D: usize>(
 
 #[cfg(test)]
 mod tests {
+    use ndarray::array;
+
     use super::*;
 
     #[test]
@@ -656,4 +710,35 @@ mod tests {
             expected_array.array.into_iter().collect::<Vec<_>>(),
         );
     }
+
+    #[test]
+    fn gather() {
+        let arr = Array2::<u8>::from_shape_vec((4, 3), (1..13).collect())
+            .unwrap()
+            .into_shared()
+            .into_dyn();
+        let tensor = NdArrayTensor::<u8, 2>::new(arr);
+        let test_cases = vec![
+            (
+                0,
+                array![ [0i64, 1, 3], [3, 1, 2] ],
+                array![ [1u8, 5, 12], [10, 5, 9] ]
+            ),
+            (
+                1,
+                array![ [0i64, 2], [1, 1], [2, 1] ],
+                array![ [1u8, 3], [5, 5], [9, 8] ]
+            )
+        ];
+        let mut i = 0;
+        for (axis, index, expected) in test_cases {
+            let index = NdArrayTensor::new(index.into_shared().into_dyn());
+            let expected = NdArrayTensor::<u8, 2>::new(expected.into_shared().into_dyn());
+            let out = NdArrayMathOps::gather(axis, tensor.clone(), index);
+            assert!(out.array.eq(&expected.array));
+            i += 1;
+        }
+        assert_eq!(i, 2);
+    }
+
 }
