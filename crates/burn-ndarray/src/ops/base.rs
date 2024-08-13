@@ -351,7 +351,11 @@ where
             let dim = coord.into_dimension();
             let arr_view: ArrayView1<'_, Ix> = dim.as_array_view();
             let mut indices: Vec<usize> = arr_view.iter().copied().collect();
-            indices[axis] = *idx as usize;
+            let idx = match idx.is_negative() {
+                true => (*idx + input_d.shape()[axis] as i64) as usize,
+                false => *idx as usize,
+            };
+            indices[axis] = idx;
             let coords = IxDyn(&indices);
             out[dim] = input_d[coords];
         }
@@ -691,7 +695,18 @@ mod tests {
                 1,
                 array![ [0i64, 2], [1, 1], [2, 1] ],
                 array![ [1u8, 3], [5, 5], [9, 8] ]
-            )
+            ),
+            // test negative indices
+            (
+                0,
+                array![ [0i64, 1, -1], [3, 1, -2] ],
+                array![ [1u8, 5, 12], [10, 5, 9] ]
+            ),
+            (
+                1,
+                array![ [0i64, -1], [1, 1], [2, -2] ],
+                array![ [1u8, 3], [5, 5], [9, 8] ]
+            ),
         ];
         let mut i = 0;
         for (axis, index, expected) in test_cases {
@@ -701,7 +716,7 @@ mod tests {
             assert!(out.array.eq(&expected.array));
             i += 1;
         }
-        assert_eq!(i, 2);
+        assert_eq!(i, 4);
     }
 
 }
